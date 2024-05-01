@@ -467,6 +467,6 @@ int main(int argc, char* argv[])
     } //runs
     for (int i=param_populace-1; i >= 0; i--)
         delete[] populace[i];
-    printf("Successful runs: %d/%d (%5.1f%%)",run_succ, PARAM_RUNS, 100*run_succ/(float)PARAM_RUNS);
+    printf("Successful runs: %d/%d (%5.1f%%)\n",run_succ, PARAM_RUNS, 100*run_succ/(float)PARAM_RUNS);
     return 0;
 }
