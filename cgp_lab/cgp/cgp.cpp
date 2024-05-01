@@ -34,6 +34,9 @@ int outputidx   = param_m*sizesloupec; //index v poli chromozomu, kde zacinaji v
 int maxidx_out  = param_n*param_m + param_in; //max. index pouzitelny jako vstup  pro vystupy
 int maxfitness  = 0; //max. hodnota fitness
 
+bool improvement_generation = false; //pokud se zlepsi fitness populace, tak se nastavi na true
+int print_generation = 1; //pokud se zlepsi fitness populace, tak se inkrementuje
+
 int fitpop, maxfitpop; //fitness populace
 
 typedef struct { //struktura obsahujici mozne hodnoty vstupnich poli chromozomu pro urcity sloupec
@@ -56,7 +59,7 @@ unsigned char lookupbit_tab[LOOKUPTABSIZE]; //LookUp pro rychle zjisteni poctu n
 //=======================================================================
 //p_chrom ukazatel na chromozom
 //-----------------------------------------------------------------------
-void print_chrom(FILE *fout, chromozom p_chrom) {
+void print_chrom(FILE *fout, chromozom p_chrom, bool new_line = true) {
   fprintf(fout, "{%d,%d, %d,%d, %d,%d,%d}", param_in, param_out, param_m, param_n, block_in, l_back, uzitobloku(p_chrom));
   for(int i=0; i<outputidx; i++) {
      if (i % 3 == 0) fprintf(fout,"([%d]",(i/3)+param_in);
@@ -69,7 +72,9 @@ void print_chrom(FILE *fout, chromozom p_chrom) {
      fprintf(fout,"%d", *p_chrom++);
   }
   fprintf(fout,")");
-  fprintf(fout,"\n");
+  if (new_line) {
+    fprintf(fout,"\n");
+  }
 }
 
 void print_xls(FILE *xlsfil) {
@@ -187,6 +192,13 @@ inline int fitness(chromozom p_chrom, int *p_svystup) {
 //-----------------------------------------------------------------------
 //OHODNOCENI POPULACE
 //=======================================================================
+// inline void print_to_dataset(chromozom chrom, int fit){
+//     int blk = uzitobloku((chromozom) chrom);
+//     printf("\tDataset: Chromosome: %d, %d, \"", fit, blk);
+//     print_chrom(stdout, (chromozom) chrom, false);
+//     printf("\"\n");
+// }
+
 inline void ohodnoceni(int *vstup_komb, int minidx, int maxidx, int ignoreidx) {
     int fit;
     for (int l=0; l < param_fitev; l++) {
@@ -194,11 +206,13 @@ inline void ohodnoceni(int *vstup_komb, int minidx, int maxidx, int ignoreidx) {
         memcpy(vystupy, vstup_komb, param_in*sizeof(int));
         vstup_komb += param_in;
 
+        // printf("\tDataset: New population:\n");
         //simulace obvodu vsech jedincu populace pro dane vstupy
         for (int i=minidx; i < maxidx; i++) {
             if (i == ignoreidx) continue;
-            
+
             fit = fitness((int *) populace[i], vstup_komb);
+            // print_to_dataset((chromozom) populace[i], fit);
             (l==0) ? fitt[i] = fit : fitt[i] += fit;
         }
 
@@ -259,6 +273,17 @@ int main(int argc, char* argv[])
 
     param_fitev = DATASIZE / (param_in+param_out); //Spocitani poctu pruchodu pro ohodnoceni
     maxfitness = param_fitev*param_out*32;         //Vypocet max. fitness
+
+    // printf("Counting maxfitness.\n");
+    // printf("DATASIZE: %d\n", DATASIZE);
+    // printf("param_in: %d\n", param_in);
+    // printf("param_out: %d\n", param_out);
+    // printf("param_fitev = (%d / (%d+%d)) = %d\n", DATASIZE, param_in, param_out, param_fitev);
+    // printf("maxfitness = %d * %d * 32 = %d\n", param_fitev, param_out, maxfitness);
+    // printf("Exiting"); return 0;
+
+    printf("Dataset: json_config: {\"maxfitness\": %d, \"param_in\": %d, \"param_out\": %d, \"param_m\": %d, \"param_n\": %d, \"l_back\": %d}\n", maxfitness, param_in, param_out, param_m, param_n, l_back);
+
     
     for (int i=0; i < param_populace; i++) //alokace pameti pro chromozomy populace
         populace[i] = new chromozom [outputidx + param_out];
@@ -375,20 +400,26 @@ int main(int argc, char* argv[])
             //Periodicky vypis chromozomu populace
             //-----------------------------------------------------------------------
             #ifdef PERIODIC_LOG
-            if (param_generaci % PERIODICLOGG == 0) {
-               printf("Generation: %d\n",param_generaci);
+            if (param_generaci % PERIODICLOGG == 0 and improvement_generation) {
+               printf("Dataset: New generation: %d\n",param_generaci);
                for(int j=0; j<param_populace; j++) {
-                  printf("{%d, %d}",fitt[j],uzitobloku((int *)populace[j]));
-                  print_chrom(stdout,(chromozom)populace[j]);
+                  printf("Dataset: Chromosome: %d,%d,%d,\"",print_generation,fitt[j],uzitobloku((int *)populace[j]));
+                  print_chrom(stdout,(chromozom)populace[j], false);
+                  printf("\"\n");
                }
+               improvement_generation = false;
+               print_generation++;
             }
             #endif
 
             //-----------------------------------------------------------------------
             //mutace nejlepsiho jedince populace (na param_populace mutantu)
             //-----------------------------------------------------------------------
+            // printf("Mutation starting\n");
+            // printf("bestfit_idx: %d\n", bestfit_idx);
             for (int i=0, midx = 0; i < param_populace;  i++, midx++) {
                 if (bestfit_idx == i) continue;
+                // printf("\tMutating: i=%d, midx=%d\n", i, midx);
 
                 p_chrom = (int *) copy_chromozome(populace[bestfit_idx],populace[midx]);
                 mutace(p_chrom);
@@ -410,11 +441,13 @@ int main(int argc, char* argv[])
                    //optimalizace na poc. bloku obvodu
 
                    blk = uzitobloku((chromozom) populace[i]);
+                //    printf("\t\tblk: b:%d\n",blk);
                    if (blk <= bestblk) {
 
                       if (blk < bestblk) {
-                         printf("Generation:%d\t\tbestblk b:%d\n",param_generaci,blk);
+                        //  printf("Generation:%d\t\tbestblk b:%d\n",param_generaci,blk);
                          log = true;
+                         improvement_generation = false;
                       }
 
                       bestfit_idx = i;
@@ -425,8 +458,10 @@ int main(int argc, char* argv[])
                    //nalezen lepsi nebo stejne dobry jedinec jako byl jeho rodic
 
                    if (fitt[i] > bestfit) {
-                      printf("Generation:%d\t\tFittness: %d/%d\n",param_generaci,fitt[i],maxfitness);
+                    //   printf("Generation:%d\t\tFittness: %d/%d\n",param_generaci,fitt[i],maxfitness);
+                    //   printf("\tbestfit: %d, fitt[%d]: %d\n", bestfit, i, fitt[i]);
                       log = true;
+                      improvement_generation = true;
                    }
 
                    bestfit_idx = i;
