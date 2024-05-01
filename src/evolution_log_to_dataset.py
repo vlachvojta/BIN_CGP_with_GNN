@@ -36,26 +36,42 @@ from matplotlib import pyplot as plt
 
 import utils
 
+
 def parse_args():
     parser = argparse.ArgumentParser(description='Convert evolution log files to dataset')
     parser.add_argument('-i', '--input', type=str, required=True, help='Input file path')
     parser.add_argument('-o', '--output_dir', type=str, required=True, help='Output directory path')
+    parser.add_argument('-v', '--val_ratio', type=float, default=0.1, help='How much procent from dataset is taken as validation dataset.')
+    parser.add_argument('-t', '--test_ratio', type=float, default=0.1, help='How much procent from dataset is taken as test dataset.')
+    parser.add_argument('-l', '--limit', type=int, default=None, help='Limit lines to export to dataset.')
+
     return parser.parse_args()
+
 
 def main():
     args = parse_args()
-
-    DatasetCreator(args.input, args.output_dir)()
+    DatasetCreator(
+        input_file=args.input,
+        output_dir=args.output_dir,
+        val_ratio=args.val_ratio,
+        test_ratio=args.test_ratio,
+        limit=args.limit
+    )()
 
 class DatasetCreator:
-    def __init__(self, input_file, output_dir):
+    def __init__(self, input_file, output_dir, val_ratio = 0.1, test_ratio = 0.1, limit = None):
         self.input_file = input_file
         self.output_dir = utils.ensure_folder_created_with_overwrite_prompt(output_dir)
+        self.val_ratio = val_ratio
+        self.test_ratio = test_ratio
+        self.limit = limit
 
         if not os.path.exists or not os.path.isfile(input_file):
             raise FileNotFoundError(f'Input file not found: {input_file}')
 
-        self.dataset_file_path = os.path.join(self.output_dir, 'dataset.csv')
+        self.train_file_path = os.path.join(self.output_dir, 'train.csv')
+        self.val_file_path = os.path.join(self.output_dir, 'val.csv')
+        self.test_file_path = os.path.join(self.output_dir, 'test.csv')
         self.dataset_config_file_path = os.path.join(self.output_dir, 'dataset_config.json')
         self.stats_file_path = os.path.join(self.output_dir, 'stats.txt')
 
@@ -78,23 +94,85 @@ class DatasetCreator:
                 start = len('Dataset: Chromosome: ')
                 chromosome_lines.append(line[start:])
 
-        chromosomes = list(csv.reader(chromosome_lines))
+        chromosomes = np.array(list(csv.reader(chromosome_lines)))
         print(f'Parsed {len(chromosomes)} chromosome lines from csv')
 
-        # save csv to a file with headers 'generation_id', 'fitness', 'blocks_used', 'chromosome'
-        with open(self.dataset_file_path, 'w') as f:
-            writer = csv.writer(f)
-            writer.writerow(['generation_id', 'fitness', 'blocks_used', 'chromosome'])
-            for row in chromosomes:
-                writer.writerow(row)
+        # Limit lines randomly
+        if self.limit and len(chromosomes) > self.limit:
+            print(f'Limiting to {self.limit} chromosomes')
+            chromosomes = chromosomes[np.random.choice(chromosomes.shape[0], self.limit, replace=False)]
+
+        self.make_stats(chromosomes)
+
+        train, val, test = self.split_dataset(chromosomes)
+
+        self.save_dataset(train, self.train_file_path)
+        self.save_dataset(val, self.val_file_path)
+        self.save_dataset(test, self.test_file_path)
 
         # save dataset config
         with open(self.dataset_config_file_path, 'w') as f:
             json.dump(json_config, f)
         
-        print(f'Dataset saved to {self.dataset_file_path}')
+        print(f'Dataset saved to {self.output_dir}')
 
-        self.make_stats(chromosomes)
+    def split_dataset(self, chromosomes: np.ndarray):
+        # Get unique generation IDs
+        generation_ids = np.unique(chromosomes[:, 0])
+
+        # Calculate the number of test chromosomes and generations
+        n_test_chromosomes = int(len(chromosomes) * self.test_ratio)
+        n_test_generations = int(len(generation_ids) * self.test_ratio)
+
+        # Choose random test generations
+        test_generations = np.random.choice(generation_ids, n_test_generations, replace=False)
+
+        # Filter test chromosomes based on the chosen test generations
+        test_indexes = np.isin(chromosomes[:, 0], test_generations)
+
+        # Get the remaining train and validation indexes
+        train_val_indexes = np.logical_not(test_indexes)
+
+        # Split the chromosomes into train, validation, and test sets
+        train = chromosomes[train_val_indexes]
+        test = chromosomes[test_indexes]
+        # sort test by generation_id
+        test = test[test[:, 0].argsort()]
+
+        # Split the remaining train and validation sets
+        val_size = int(len(train) * self.val_ratio)
+        val_indexes = np.random.choice(np.arange(len(train)), val_size, replace=False)
+        val = train[val_indexes]
+        train = np.delete(train, val_indexes, axis=0)
+
+        return train, val, test
+
+        # # generation_ids = np.unique(chromosomes[:, 0])
+        # # n_test_chromosomes = int(len(generation_ids) * self.test_ratio)
+        # # n_test_generations = n_test_chromosomes
+
+
+
+        # # Choose random indexes for train, val, test
+        # indexes = np.arange(len(chromosomes))
+        # np.random.shuffle(indexes)
+
+        # val_size = int(len(chromosomes) * self.val_ratio)
+        # test_size = int(len(chromosomes) * self.test_ratio)
+
+        # val_indexes = indexes[:val_size]
+        # test_indexes = indexes[val_size:val_size + test_size]
+        # train_indexes = indexes[val_size + test_size:]
+
+        # return chromosomes[train_indexes], chromosomes[val_indexes], chromosomes[test_indexes]
+
+    def save_dataset(self, chromosomes, file_path):
+        # save csv to a file with headers 'generation_id', 'fitness', 'blocks_used', 'chromosome'
+        with open(file_path, 'w') as f:
+            writer = csv.writer(f)
+            writer.writerow(['generation_id', 'fitness', 'blocks_used', 'chromosome'])
+            for row in chromosomes:
+                writer.writerow(row)
 
     def make_stats(self, chromosomes):
         # get stats, save them to self.stats_file_path
