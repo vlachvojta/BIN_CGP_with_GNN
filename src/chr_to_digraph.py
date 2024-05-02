@@ -58,7 +58,10 @@ class Chromosome(pydantic.BaseModel):
 
     @classmethod
     def from_str(cls, chromosome_str: str):
-        preamble, data, outputs = re.match(r"\{(.*)\}\((.*)\)\(([^\)]+)\)", chromosome_str).groups()
+        match_obj = re.match(r"\{(.*)\}\((.*)\)\(([^\)]+)\)", chromosome_str)
+        if not match_obj:
+            raise ValueError(f'Invalid chromosome string: {chromosome_str}')
+        preamble, data, outputs = match_obj.groups()
         # print(f'Preamble: {preamble}, Data: {data}, Outputs: {outputs}')
         n_inputs, n_outputs, rows, cols, block_inputs, lback, blocks_used = list(map(int, preamble.split(",")))
         # print(f'Preamble: {n_inputs=}, {n_outputs=}, {rows=}, {cols=}, {block_inputs=}, {lback=}, {blocks_used=}')
@@ -76,31 +79,17 @@ class Chromosome(pydantic.BaseModel):
         return cls(n_inputs=n_inputs, n_outputs=n_outputs, rows=rows, cols=cols, block_inputs=block_inputs, 
                    lback=lback, blocks_used=blocks_used, nodes=nodes, outputs=outputs)
 
+def chr_to_digraph(chromosome_str: str):
+    chromosome = Chromosome.from_str(chromosome_str).to_nx()
+    data = torch_geometric.utils.from_networkx(chromosome)
+    x = torch.cat((data.type.unsqueeze(1), data.function_id.unsqueeze(1)), dim=1).float()
+    data = torch_geometric.data.Data(x=x, edge_index=data.edge_index)
+    return data
+
 
 def main():
-    chromosome_str = '{6,6, 7,7, 2,2,16}([6]3,2,1)([7]4,1,0)([8]0,3,2)([9]5,2,1)([10]5,5,0)([11]5,3,0)([12]0,0,1)([13]1,11,1)([14]6,1,3)([15]11,11,3)([16]6,9,3)([17]6,0,1)([18]5,5,2)([19]6,6,2)([20]8,2,3)([21]0,1,2)([22]13,1,3)([23]9,9,2)([24]7,3,0)([25]14,4,0)([26]2,7,0)([27]5,4,1)([28]21,20,3)([29]16,19,3)([30]3,19,1)([31]22,5,2)([32]24,25,3)([33]23,0,0)([34]20,33,3)([35]3,27,3)([36]33,30,2)([37]25,27,3)([38]27,33,1)([39]0,0,1)([40]29,4,2)([41]5,32,3)([42]36,0,1)([43]40,30,1)([44]32,36,0)([45]28,31,1)([46]27,2,1)([47]5,34,2)([48]37,46,1)([49]34,38,2)([50]35,46,2)([51]41,3,1)([52]4,46,1)([53]41,37,2)([54]2,1,2)(37,43,15,6,16,52)'
-    chromosome = Chromosome.from_str(chromosome_str)
-    print(f'chromosome: {chromosome}')
-
-    chromosome_nx = chromosome.to_nx()
-
-    # Print graph nodes and edges
-    # print("Nodes of graph:")
-    # # print(chromosome_nx.nodes(data=True))
-    # for node in chromosome_nx.nodes(data=True):
-    #     print(node)
-    # print("\nEdges of graph:")
-    # print(chromosome_nx.edges(data=True))
-
-    # Convert nx graph to input to GNN
-    data = torch_geometric.utils.from_networkx(chromosome_nx)
-
-    x = torch.cat((data.type.unsqueeze(1), data.function_id.unsqueeze(1)), dim=1)
-    # print(f'x: {x.shape}')
-
-    data = torch_geometric.data.Data(x=x, edge_index=data.edge_index)
-
-    # Print the transformed data
+    # test run
+    data = chr_to_digraph('{6,6, 7,7, 2,2,16}([6]3,2,1)([7]4,1,0)([8]0,3,2)([9]5,2,1)([10]5,5,0)([11]5,3,0)([12]0,0,1)([13]1,11,1)([14]6,1,3)([15]11,11,3)([16]6,9,3)([17]6,0,1)([18]5,5,2)([19]6,6,2)([20]8,2,3)([21]0,1,2)([22]13,1,3)([23]9,9,2)([24]7,3,0)([25]14,4,0)([26]2,7,0)([27]5,4,1)([28]21,20,3)([29]16,19,3)([30]3,19,1)([31]22,5,2)([32]24,25,3)([33]23,0,0)([34]20,33,3)([35]3,27,3)([36]33,30,2)([37]25,27,3)([38]27,33,1)([39]0,0,1)([40]29,4,2)([41]5,32,3)([42]36,0,1)([43]40,30,1)([44]32,36,0)([45]28,31,1)([46]27,2,1)([47]5,34,2)([48]37,46,1)([49]34,38,2)([50]35,46,2)([51]41,3,1)([52]4,46,1)([53]41,37,2)([54]2,1,2)(37,43,15,6,16,52)')
     print(f'data: {data}')
     print(f'x: {data.x.shape}')
     print(f'edge_index: {data.edge_index.shape}')

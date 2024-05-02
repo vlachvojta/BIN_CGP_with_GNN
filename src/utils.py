@@ -1,4 +1,5 @@
 import os
+import time
 
 def ensure_folder_created_with_overwrite_prompt(folder_path):
     if os.path.exists(folder_path):
@@ -22,3 +23,22 @@ def ensure_folder_created_with_overwrite_prompt(folder_path):
         os.makedirs(folder_path)
 
     return folder_path
+
+def ensure_folder_created(folder_path):
+    os.makedirs(folder_path, exist_ok=True)
+    return folder_path
+
+def find_last_model(path, key: str) -> (str, str):
+    if os.path.isdir(path):
+        model_names = [model for model in os.listdir(path) if model.endswith('.pt')]
+        if model_names:
+            last_model = sorted(model_names, key=lambda x: int(re.match(rf'\S+_(\d+){key}', x).groups(1)[0]))[-1]
+            return path, last_model
+
+    if os.path.isfile(path) and path.endswith('.pt'):
+        return os.path.dirname(path), os.path.basename(path)
+
+    return None, None
+
+def timeit(start_time) -> str:
+    return time.strftime("%H:%M:%S", time.gmtime(time.time() - start_time))

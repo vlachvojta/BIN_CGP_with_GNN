@@ -1,9 +1,10 @@
 import torch
-import torch_geometric
+from torch_geometric.nn import GCNConv
+from torch_geometric.nn import global_mean_pool
 
 class GraphRegressorBasic(torch.nn.Module):
     def __init__(self, in_features: int = 2, conv_features: int = 16, conv_features_2: int = 32, out_features: int = 2):
-        super(GraphRegressor, self).__init__()
+        super(GraphRegressorBasic, self).__init__()
         self.conv1 = GCNConv(in_features, conv_features)
         self.conv2 = GCNConv(conv_features, conv_features_2)
         self.pool = global_mean_pool

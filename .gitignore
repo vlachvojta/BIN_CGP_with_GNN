@@ -1,4 +1,5 @@
 cgp_lab/cgp/log_*
+training/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
