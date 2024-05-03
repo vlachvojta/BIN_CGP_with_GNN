@@ -1,6 +1,6 @@
 import torch
 from torch_geometric.nn import GCNConv
-from torch_geometric.nn import global_mean_pool
+from torch_geometric.nn import global_mean_pool, global_add_pool
 
 class NetUtils:
     def create_config(self, locals):
@@ -100,6 +100,35 @@ class EnhancedGraphRegressor(torch.nn.Module, NetUtils):
         x = self.pool(x, data.batch)
 
         # Process the graph representation
+        x = self.fc(x)
+
+        return x
+
+
+class GraphRegressorBasicBlocksUsed(torch.nn.Module, NetUtils):
+    def __init__(self, in_features = 2, embed_size = 32, conv_layers = 9, out_features = 1):
+        super(self.__class__, self).__init__()
+        self.config = self.create_config(locals())
+
+        self.embed = torch.nn.Linear(in_features, embed_size)
+        self.conv_layers = torch.nn.ModuleList([
+            GCNConv(embed_size, embed_size) for _ in range(conv_layers)
+        ])
+
+        self.pool = global_add_pool
+        self.fc = torch.nn.Linear(embed_size, out_features)
+
+    def forward(self, data):
+        x, edge_index = data.x, data.edge_index
+
+        x = self.embed(x)
+
+        # Process the graph with multiple GCN layers
+        for conv in self.conv_layers:
+            x = conv(x, edge_index)
+            x = torch.relu(x)
+
+        x = self.pool(x, data.batch)  # data MUST be batched (or add if-else)
         x = self.fc(x)
 
         return x

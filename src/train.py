@@ -12,6 +12,7 @@ from torch_geometric.data import DataLoader
 from torch_geometric.data import Dataset as torch_dataset
 import matplotlib.pyplot as plt
 import torch_geometric
+import pandas as pd
 
 import utils
 from net_definitions import *
@@ -114,6 +115,7 @@ class TaskRegression():
     def test_step(self, dataloader) -> float:
         self.model.eval()
         losses = []
+        log = torch.zeros([1, len(self.outputs * 2)])
 
         with torch.no_grad():
             for i, (graph, labels) in enumerate(dataloader):
@@ -123,6 +125,18 @@ class TaskRegression():
                 out = self.model(graph)
                 loss = self.criterion(out, labels)
                 losses.append(loss.item())
+
+                if i < 5:
+                    log_step = torch.concat((labels, out), dim=1)
+                    log = torch.concat((log, log_step), dim=0)
+                    # reorder log_step to match test_step_log headers
+                    # log_step = log_step[:, [0, 1, 3, 4]]
+                    # save labels and predictions to test_step_log
+
+        order = [i+b*2 for i in range(2) for b in range(len(self.outputs))]  # re-order columns to match test_step_log headers
+        log = log[1:, order]
+        df = pd.DataFrame(log.numpy(), columns=[out + sign for out in self.outputs for sign in ['', '_pred']])
+        df.to_csv(os.path.join(self.output_train_dir, f'test_step_log_{self.trained_steps}.tsv'), sep='\t', index=False)
 
         mean_val_loss = sum(losses) / len(losses) if losses else 0
         self.val_losses.append(mean_val_loss)
@@ -157,9 +171,10 @@ class TaskRegression():
 
 
 class CustomDataset(torch_dataset):
-    def __init__(self, dataset_path, part='train'):
+    def __init__(self, dataset_path, part='train', outputs=['fitness', 'blocks_used']):
         self.dataset_path = dataset_path
         self.part = part
+        self.outputs = outputs
 
         self.config = self.load_config()
         self.data = self.load_data()
@@ -172,7 +187,7 @@ class CustomDataset(torch_dataset):
         with open(os.path.join(self.dataset_path, f'{self.part}.csv'), 'r') as f:
             data = list(csv.reader(f))
         return data[1:]  # ignore headers
-    
+
     def __len__(self):
         return len(self.data)
 
@@ -181,7 +196,11 @@ class CustomDataset(torch_dataset):
         # print(f'Dataset getting item: {generation_id=}, {fitness=}, {blocks_used=}, {chromosome=}')
         graph = chr_to_digraph(chromosome)
 
-        return graph, torch.tensor([float(fitness), float(blocks_used)], dtype=torch.float32)
+        labels = []
+        for output in self.outputs:
+            labels.append(float(eval(output)))
+        
+        return graph, torch.tensor(labels, dtype=torch.float32)
 
 task_choices = {
     'regression': TaskRegression,
@@ -203,6 +222,8 @@ def parse_args():
                         help='Path to model config file. If not provided, will try to find output_train_dir/model_config.json')
     parser.add_argument('-k', '--task', choices=list(task_choices.keys()), default='regression',
                         help=f'Which task should the net learn. Choices: {list(task_choices.keys())}')
+    parser.add_argument('--model_output', nargs='*', default=['fitness', 'blocks_used'],
+                        help=f'Which outputs should the model predict. Default: ["fitness", "blocks_used"]')
 
     parser.add_argument('-b', '--batch_size', default=20, type=int)
     parser.add_argument('-e', '--max_steps', default=1_200, type=int)
@@ -218,14 +239,14 @@ def main():
     print(f'Using device: {device}')
 
     # load datasets
-    train_dataset = CustomDataset(args.dataset_path, part='train')
-    val_dataset = CustomDataset(args.dataset_path, part='val')
+    train_dataset = CustomDataset(args.dataset_path, part='train', outputs=args.model_output)
+    val_dataset = CustomDataset(args.dataset_path, part='val', outputs=args.model_output)
 
     train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
     val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
 
     # prepare task
-    task = TaskRegression(args.output_train_dir, args.model_config, device=device)
+    task = TaskRegression(args.output_train_dir, args.model_config, device=device, outputs=args.model_output)
     print(f'Task loaded')
     print(f'model: \n{task.model}')
 
