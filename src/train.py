@@ -4,6 +4,7 @@ import sys
 import json
 import csv
 import time
+import re
 
 import numpy as np
 import torch
@@ -13,29 +14,23 @@ import matplotlib.pyplot as plt
 import torch_geometric
 
 import utils
-from net_definitions import GraphRegressorBasic
+from net_definitions import *
 from chr_to_digraph import chr_to_digraph
-
-net_choices_classes = {
-    'GraphRegressorBasic': GraphRegressorBasic,
-}
-
-
 
 
 class TaskRegression():
-    def __init__(self, output_train_dir, model_class, criterion = torch.nn.MSELoss(), 
+    def __init__(self, output_train_dir, model_config_path: str, criterion = torch.nn.MSELoss(),
                  optimizer = None, device = 'cpu', outputs = ['fitness', 'blocks_used']):
         self.output_train_dir = utils.ensure_folder_created(output_train_dir)
-        self.model_class = model_class
+        self.model_config, self.model_config_path = self.load_model_config(model_config_path)
         self.criterion = criterion
         self.device = device
         self.outputs = outputs
 
         self.checkpoint_key = 'trainedsteps'
-        self.model, self.trained_steps = self.load_model(model_class, self.output_train_dir, self.device)
+        self.model, self.trained_steps = self.load_model(self.model_config, device=device)
         if self.model is None:
-            self.model = self.create_model(model_class)
+            self.model = self.init_model(self.model_config)
 
         self.optimizer = optimizer if optimizer else torch.optim.Adam(self.model.parameters())
 
@@ -43,21 +38,65 @@ class TaskRegression():
         self.val_losses_file = os.path.join(self.output_train_dir, 'val_losses.npy')
         self.train_losses, self.val_losses = self.load_loss_stats()
 
-    def create_model(self, cls):
-        model = cls(out_features=len(self.outputs))
+        self.save_model_config()
+
+    def save_model_config(self):
+        with open(self.model_config_path, 'w') as f:
+            json.dump(self.model.config, f)
+
+    def load_model_config(self, model_config_path):
+        if model_config_path is None:
+            model_config_path = os.path.join(self.output_train_dir, 'model_config.json')
+
+        if not os.path.exists(model_config_path):
+            raise FileNotFoundError(f'Model config not found at {model_config_path}')
+            # # inform user that model config does not exist and ask if they want to load from different path
+            # print(f'Model config not found at {model_config_path}.')
+            # # ask if user wants to load from different path, create default model config, or cancel
+            # while True:
+            #     choice = input(f'Options: [L]oad from different path, [C]reate default model config, [A]bort: ').lower()
+            #     if choice == 'l':
+            #         model_config_path = input('Enter model config path: ')
+            #         if os.path.exists(model_config_path):
+            #             if os.path.isdir(model_config_path):
+            #                 model_config_path = os.path.join(model_config_path, 'model_config.json')
+            #             break
+            #         else:
+            #             print(f'Error: Model config not found at {model_config_path}')
+            #     elif choice == 'c':
+            #         model_config_path = os.path.join(self.output_train_dir, 'model_config.json')
+            #         with open(model_config_path, 'w') as f:
+            #             json.dump(self.model.config, f)
+            #         break
+            #     elif choice == 'a':
+            #         raise FileNotFoundError(f'Model config not found at {model_config_path}')
+            #     else:
+            #         print('Invalid choice. Please enter L, C, or A.')
+
+        with open(model_config_path, 'r') as f:
+            return json.load(f), model_config_path        
+
+    def init_model(self, model_config):
+        # if not utils.class_exists(model_config['model_class']):
+        #     raise ValueError(f'Class {model_config["model_class"]} does not exist.')
+
+        try: 
+            model = eval(model_config['model_class']).from_config(model_config)
+        except Exception as e:
+            raise ValueError(f'Model class {model_config["model_class"]} does not exist or does not have from_config method.')
         model.to(self.device)
         return model
 
     def save_model(self):
-        model_path = os.path.join(self.output_train_dir, f'{self.model_class.__name__}_{self.trained_steps}{self.checkpoint_key}.pth')
+        model_path = os.path.join(self.output_train_dir, f'{self.model.__class__.__name__}_{self.trained_steps}{self.checkpoint_key}.pth')
         torch.save(self.model.state_dict(), model_path)
         return model_path
 
-    def load_model(self, model_class, path:str = 'models', device = 'cpu'):
-        path, model_name = utils.find_last_model(path, self.checkpoint_key)
+    def load_model(self, model_config, device = 'cpu'):
+        path, model_name = utils.find_last_model(self.output_train_dir, self.checkpoint_key)
         if not path or not model_name:
             return None, 0
-        
+
         trained_steps = 0
         match_obj = re.match(rf'\S+_(\d+){self.checkpoint_key}', model_name)
         if match_obj:
@@ -66,11 +105,10 @@ class TaskRegression():
         print(f'Loading model from {os.path.join(path, model_name)}')
         # print(f'Hidden dim: {hidden_dim}, epochs: {epochs}, n_layers: {n_layers}, bidirectional: {bidirectional}, bias: {bias}')
 
-        model = model_class()
+        model = self.init_model(model_config)
         model.load_state_dict(torch.load(os.path.join(path, model_name), map_location=device))
         model.eval()
 
-        print(f'Model loaded from {os.path.join(path, model_name)}. {trained_steps} trained steps.')
         return model, trained_steps
 
     def test_step(self, dataloader) -> float:
@@ -81,25 +119,30 @@ class TaskRegression():
             for i, (graph, labels) in enumerate(dataloader):
                 graph = graph.to(self.device)
                 labels = labels.to(self.device)
-                # print(f'{graph=}, {labels.shape=}')
 
                 out = self.model(graph)
-                # print(f'{out.shape=}, {labels.shape=}')
                 loss = self.criterion(out, labels)
                 losses.append(loss.item())
 
-        return sum(losses) / len(losses) if losses else 0
+        mean_val_loss = sum(losses) / len(losses) if losses else 0
+        self.val_losses.append(mean_val_loss)
+        return mean_val_loss
 
     def plot_stats(self):
-        # print(f'\nTest step. Train losses: [{train_losses_str}]') # , Val IoUs: {val_losses}')
-
         # produce 2 figure chart of train_losses and val_losses
-        fig, ax = plt.subplots(2)
-        ax[0].plot(self.train_losses)
-        ax[0].set_title('Train losses')
-        ax[1].plot(self.val_losses)
-        ax[1].set_title('Val losses')
+        fig, ax = plt.subplots(2, 2)
+        for i in range(2):
+            ax[0, i].plot(self.train_losses)
+            ax[0, i].set_title('Train losses')
+            ax[0, i].set_xlabel('Trained steps')
+            ax[1, i].plot(self.val_losses)
+            ax[1, i].set_title('Val losses')
+            ax[1, i].set_xlabel('Test steps')
+
+        ax[0, 0].set_yscale('log')
+        ax[1, 0].set_yscale('log')
         plt.tight_layout()
+        print(f'Saving losses to {os.path.join(self.output_train_dir, "losses.png")}')
         plt.savefig(os.path.join(self.output_train_dir, 'losses.png'))
         plt.clf()
 
@@ -140,6 +183,9 @@ class CustomDataset(torch_dataset):
 
         return graph, torch.tensor([float(fitness), float(blocks_used)], dtype=torch.float32)
 
+task_choices = {
+    'regression': TaskRegression,
+}
 
 def parse_args():
     print(sys.argv)
@@ -149,18 +195,17 @@ def parse_args():
                         help="Source path (default: datasets/multi3_3000")
     parser.add_argument('-o', '--output_train_dir', type=str, default='training/Regression_basic',
                         help='Where to store training progress.')
-    parser.add_argument('-s', '--save_step', type=int, default=50,
+    parser.add_argument('-s', '--save_step', type=int, default=200,
                         help='How often to save checkpoint')
-    parser.add_argument('-t', '--test_step', type=int, default=10,
+    parser.add_argument('-t', '--test_step', type=int, default=50,
                         help='How often to test model with validation set')
-    parser.add_argument('-m', '--model_class', choices=list(net_choices_classes.keys()), default='GraphRegressorBasic',
-                        help='Which model to use for training')
+    parser.add_argument('-m', '--model_config', type=str, default=None,
+                        help='Path to model config file. If not provided, will try to find output_train_dir/model_config.json')
+    parser.add_argument('-k', '--task', choices=list(task_choices.keys()), default='regression',
+                        help=f'Which task should the net learn. Choices: {list(task_choices.keys())}')
 
     parser.add_argument('-b', '--batch_size', default=20, type=int)
-    parser.add_argument('-e', '--max_steps', default=1_000, type=int)
-    # parser.add_argument('--lr', default=0.1, type=float)
-    # parser.add_argument('--momentum', type=float, default=0.9)
-    # parser.add_argument('--weight_decay', type=float, default=1e-4)
+    parser.add_argument('-e', '--max_steps', default=1_200, type=int)
 
     args = parser.parse_args()
     print(f'args: {args}')
@@ -180,7 +225,7 @@ def main():
     val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
 
     # prepare task
-    task = TaskRegression(args.output_train_dir, net_choices_classes[args.model_class], device=device)
+    task = TaskRegression(args.output_train_dir, args.model_config, device=device)
     print(f'Task loaded')
     print(f'model: \n{task.model}')
 
@@ -194,142 +239,34 @@ def main():
         epoch_time = time.time()
 
         for _, (graph, labels) in enumerate(train_dataloader):
-            if task.trained_steps >= args.max_steps:
+            if task.trained_steps >= args.max_steps + 1:
                 training = False; break
 
             if task.trained_steps % args.test_step == 0:
+                mean_val_loss = task.test_step(val_dataloader)
                 print('\nTest step:')
-                print(f'trained_step: {task.trained_steps}, mean loss: {sum(task.train_losses[-args.test_step:]) / args.test_step:.2f}, '
-                      f'time of test_step: {utils.timeit(test_step_time)}, '
+                print(f'trained_step: {task.trained_steps}, '
+                      f'mean train loss: {sum(task.train_losses[-args.test_step:]) / args.test_step:.2f}, '
+                      f'mean val loss: {mean_val_loss:.2f}, time of test_step: {utils.timeit(test_step_time)}, '
                       f'time from start: {utils.timeit(start_time)}')
-                val_iou = task.test_step(val_dataloader)
-                task.val_losses.append(val_iou)
                 task.plot_stats()
                 test_step_time = time.time()
 
             if task.trained_steps % args.save_step == 0:
                 print('\nSave step:')
-                task.save_model()
-                print(f'Model saved at {task.output_train_dir}')
+                model_path = task.save_model()
 
             graph = graph.to(device)
             labels = labels.to(device)
-            # print(f'{graph.shape=}, {labels.shape=}')
 
             task.model.train()
             task.optimizer.zero_grad()
             out = task.model(graph)
-            # print(f'{out.shape=}, {labels.shape=}')
             loss = task.criterion(out, labels)
             loss.backward()
             task.optimizer.step()
             task.train_losses.append(loss.item())
             task.trained_steps += 1
-
-
-# def train():
-#     num_epochs = 100
-
-#     for epoch in range(1, num_epochs):
-#         model.train()
-#         out = model(data)
-#         loss = criterion(out, data.y)
-#         optimizer.zero_grad()
-#         loss.backward()
-#         optimizer.step()
-
-#         model.eval()
-#         with torch.inference_mode():
-#             out = model(data)
-#             loss = criterion(out, data.y)
-
-#         print(f'Epoch: {epoch:03d}, Loss: {loss:.4f}')
-
-
-# def train(net, train_data: Dataset, val_data: Dataset, charset: Charset,
-#           learn_rate, device='cpu', batch_size=32, epochs=5, save_step=5, view_step=1,
-#           hidden_dim=8, GRU_layers=1, bidirectional=False, bias=False,
-#           training_path:str = 'models'):
-
-#     model, epochs_trained = None, 0
-#     if training_path:
-#         if not os.path.isdir(training_path):
-#             os.makedirs(training_path)
-#         else:
-#             model, epochs_trained = helpers.load_model(net, training_path)
-#             epochs += epochs_trained
-
-#     if not model:
-#         model = net(hidden_dim=hidden_dim, device=device, batch_size=batch_size, n_layers=GRU_layers, bidirectional=bidirectional, bias=bias)
-
-#     input_example, _ = next(train_data.batch_iterator(5))
-#     writer.add_graph(model, input_example)
-#     writer.flush()
-#     writer.close()
-
-#     model.to(device)
-#     print(f'Using device: {device}')
-#     print(f'Using model:\n{model}')
-
-#     # Defining loss function and optimizer
-#     criterion = charset.task.criterion()
-#     optimizer = torch.optim.Adam(model.parameters(), lr=learn_rate)
-
-#     model.train()
-#     print("Starting Training")
-#     print('')
-#     epoch_times = []
-#     trn_losses = []
-#     trn_losses_lev = []
-#     val_losses_lev = []
-#     h = None  # model.init_hidden(batch_size).to(device)
-
-#     for epoch in range(epochs_trained, epochs + 1):
-#         export_path = helpers.get_save_path(training_path, hidden_dim, epoch, batch_size, n_layers=GRU_layers, bidirectional=bidirectional, bias=bias)
-#         epoch_outputs = []
-#         epoch_labels = []
-#         start_time = time.time()
-#         model.train()
-
-#         for i, (x, labels) in enumerate(train_data.batch_iterator(batch_size), start=1):
-#             model.zero_grad()
-#             out, _ = model(x.to(device), h)
-#             loss = criterion(out, labels.to(device))
-#             optimizer.zero_grad()
-#             loss.backward()
-#             optimizer.step()
-
-#             outputs = [charset.tensor_to_word(o) for o in out]
-#             epoch_outputs += outputs
-#             labels = [charset.tensor_to_word(l) for l in labels]
-#             epoch_labels += labels
-#         trn_losses_lev.append(helpers.levenstein_loss(epoch_outputs, epoch_labels))
-#         trn_losses.append(loss.item())
-
-#         if epoch % view_step == 0:
-#             model.eval()
-#             val_loss_lev, val_in_words, val_out_words, val_labels_words = test_val(model, val_data, device, batch_size, charset)
-#             val_losses_lev.append(val_loss_lev)
-
-#             print(f"Epoch {epoch}/{epochs}, trn losses: {trn_losses[-1]:.5f}, {trn_losses_lev[-1]:.5f} %, val losses: {val_losses_lev[-1]:.3f} %")
-#             print(f"Average epoch time in this view_step: {np.mean(epoch_times[-view_step:]):.2f} seconds")
-#             print('Example:')
-#             print(f'\tin:  {val_in_words[:100]}')
-#             print(f'\tout: {val_out_words[:100]}')
-#             print(f'\tlab: {val_labels_words[:100]}')
-#             print('')
-
-#         if epoch % save_step == 0:
-#             helpers.plot_losses(trn_losses, trn_losses_lev, val_losses_lev, epoch, view_step=view_step, path=export_path)
-#             helpers.save_model(model, path=export_path)
-#             helpers.save_out_and_labels(val_out_words, val_labels_words, path=export_path)
-#         current_time = time.time()
-#         print(f'epoch time: {current_time-start_time:.2f} seconds')
-#         epoch_times.append(current_time-start_time)
-
-#     print(f"Total Training Time: {sum(epoch_times):.2f} seconds. ({np.mean(epoch_times):.2f} seconds per epoch)")
-
-#     return model
 
 
 if __name__ == '__main__':

@@ -30,7 +30,7 @@ class Chromosome(pydantic.BaseModel):
     nodes: dict[int, Node]
     outputs: list[int]
 
-    input_id: int = -10
+    input_id: int = 30
     function_id: int = 0
     output_id: int = 20
 
