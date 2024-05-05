@@ -1,0 +1,1 @@
+{"model_class": "GraphRegressorBasicBlocksUsed", "in_features": 4, "conv_layers": 9, "out_features": 1, "embed_size": 32}
