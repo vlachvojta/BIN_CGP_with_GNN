@@ -4,11 +4,17 @@ import sys
 import json
 import csv
 import time
+from functools import partial
 
 import numpy as np
+from scipy.integrate import quad
+from scipy.stats import beta
 
 import utils
 from chr_to_digraph import Chromosome
+
+# a1, b1 = 1, 1
+# a2, b2 = 1, 1
 
 def parse_args():
     print(sys.argv)
@@ -18,7 +24,7 @@ def parse_args():
                         help="Source path (default: datasets/multi3_3000")
     parser.add_argument('-o', '--output_dir', type=str, default='testing/without_bayes_models',
                         help='Where to store testing stats.')
-    parser.add_argument('-m', '--mode', default='normal', choices=['normale', 'bayes'],
+    parser.add_argument('-m', '--mode', default='normal', choices=['normal', 'bayes'],
                         help='How to simulate stuff.')
     parser.add_argument('-c', '--circuit_function', default='multiplicator3', choices=['multiplicator3'],
                         help='What function the circuir do.')
@@ -56,12 +62,15 @@ def main():
 
     # go through all data and simulate all possibilities to get fitness
     for generation_id in range(len(test_dataset)):
+        print(f'generation_id: {generation_id}/ {len(test_dataset)}')
         chromosomes = parse_generation(test_dataset[generation_id])
         if chromosomes is None: skipped_generations += 1; continue
 
         # simulate inputs and check outputs
         for sim_input, sim_output in simulation_data:
             [chr.simulate(sim_input, sim_output) for chr in chromosomes]
+            if args.mode == 'bayes':
+                eliminate_chromosomes(chromosomes)
 
         best_candidate_id = find_best_candidate(chromosomes)
         # Check correctly categorized the best fitness candidate, print simulation_runs
@@ -114,8 +123,11 @@ class ChromosomeWrapper:
         self.chromosome = chromosome if isinstance(chromosome, Chromosome) else Chromosome.from_str(chromosome)
         self.succ = 0  # succesfull simulation according to GT
         self.simulations = 0
+        self.active = True
 
     def simulate(self, input_, gt):
+        if not self.active: return
+
         inputs = self.unsqueeze(input_, self.chromosome.n_inputs)
         gt = self.unsqueeze(gt, self.chromosome.n_outputs)
 
@@ -128,6 +140,42 @@ class ChromosomeWrapper:
     def unsqueeze(input_, size):
         return [((input_ >> i) & 0b1) for i in reversed(range(size))]
 
+    def beta_mean(self):
+        return max(self.succ, 1) / (self.simulations + 1)  # +1 because of starting as a flat prior 1, 1
+    
+    def make_a_b(self):
+        return max(self.succ, 1), self.simulations + 1 - self.succ    # +1 because of starting as a flat prior 1, 1
+
+
+def diff_pdf(theta, a1, b1, a2, b2):
+    return np.maximum(0, beta.pdf(theta, a2, b2) - beta.pdf(theta, a1, b1))
+
+def eliminate_chromosomes(chromosomes):
+    # find max mean
+    beta_means = [(i, chr.beta_mean()) for i, chr in enumerate(chromosomes)]
+
+    max_mean_chrom = sorted(beta_means, key=lambda x: x[1], reverse=True)[0][0] # get key of chromosome with max mean
+    a2, b2 = chromosomes[max_mean_chrom].make_a_b()
+    print(f'{a2=}, {b2=}')
+    threshold = 0.8
+    skip_threshold = 8
+
+    # calc betas for all other chromosomes to it the best one
+    for i, chrom in enumerate(chromosomes):
+        if i == max_mean_chrom or not chrom.active:
+            continue
+
+        a1, b1 = chrom.make_a_b()
+        if abs(a1 - a2) <= skip_threshold and abs(b1 - b2) <= skip_threshold:
+            continue  # skip, too much effort for nothing...
+        result, _ = quad(partial(diff_pdf, a1=a1, b1=b1, a2=a2, b2=b2), 0, 1)
+        print(f'{a1=}, {b1=}, {result=}')
+
+        if result >= threshold:
+            print(f'Deactivating chrom {i}')
+            chrom.active = False
+
+    # eliminate if threshold by ch.active = False
 
 class TestDataset:
     def __init__(self, dataset_path, part='test'): #, outputs=['fitness', 'blocks_used'], input_features=4):

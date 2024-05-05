@@ -40,3 +40,7 @@ maxfitness = param_fitev*param_out*32;         //Vypocet max. fitness
 ### Moje
 2 ^ 6 vstupu může mít 2 ^ 6 výstupů
 
+
+## Výsledky Bayes inference
+s Bayes: 17738 simulací
+normální: 19968 simulací
