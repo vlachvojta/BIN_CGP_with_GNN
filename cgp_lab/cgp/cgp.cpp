@@ -34,8 +34,9 @@ int outputidx   = param_m*sizesloupec; //index v poli chromozomu, kde zacinaji v
 int maxidx_out  = param_n*param_m + param_in; //max. index pouzitelny jako vstup  pro vystupy
 int maxfitness  = 0; //max. hodnota fitness
 
-bool improvement_generation = false; //pokud se zlepsi fitness populace, tak se nastavi na true
-int print_generation = 1; //pokud se zlepsi fitness populace, tak se inkrementuje
+int generation_to_print = 10; // kolik generaci se ma vypsat po zlepseni populace
+int improvement_generation = 0; //pokud se zlepsi fitness populace, tak se nastavi na true
+int print_generation_counter = 1; //pokud se zlepsi fitness populace, tak se inkrementuje
 
 int fitpop, maxfitpop; //fitness populace
 
@@ -400,15 +401,15 @@ int main(int argc, char* argv[])
             //Periodicky vypis chromozomu populace
             //-----------------------------------------------------------------------
             #ifdef PERIODIC_LOG
-            if (param_generaci % PERIODICLOGG == 0 and improvement_generation) {
+            if (param_generaci % PERIODICLOGG == 0 and improvement_generation > 0) {
                printf("Dataset: New generation: %d\n",param_generaci);
                for(int j=0; j<param_populace; j++) {
-                  printf("Dataset: Chromosome: %d,%d,%d,\"",print_generation,fitt[j],uzitobloku((int *)populace[j]));
+                  printf("Dataset: Chromosome: %d,%d,%d,\"",print_generation_counter,fitt[j],uzitobloku((int *)populace[j]));
                   print_chrom(stdout,(chromozom)populace[j], false);
                   printf("\"\n");
                }
-               improvement_generation = false;
-               print_generation++;
+               improvement_generation--;
+               print_generation_counter++;
             }
             #endif
 
@@ -447,7 +448,7 @@ int main(int argc, char* argv[])
                       if (blk < bestblk) {
                         //  printf("Generation:%d\t\tbestblk b:%d\n",param_generaci,blk);
                          log = true;
-                         improvement_generation = false;
+                         improvement_generation += generation_to_print;
                       }
 
                       bestfit_idx = i;
@@ -461,7 +462,7 @@ int main(int argc, char* argv[])
                     //   printf("Generation:%d\t\tFittness: %d/%d\n",param_generaci,fitt[i],maxfitness);
                     //   printf("\tbestfit: %d, fitt[%d]: %d\n", bestfit, i, fitt[i]);
                       log = true;
-                      improvement_generation = true;
+                      improvement_generation += generation_to_print;
                    }
 
                    bestfit_idx = i;
