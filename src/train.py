@@ -8,7 +8,7 @@ import re
 
 import numpy as np
 import torch
-from torch_geometric.data import DataLoader
+from torch_geometric.loader import DataLoader
 from torch_geometric.data import Dataset as torch_dataset
 import matplotlib.pyplot as plt
 import torch_geometric
@@ -158,7 +158,7 @@ class TaskRegression():
         plt.tight_layout()
         print(f'Saving losses to {os.path.join(self.output_train_dir, "losses.png")}')
         plt.savefig(os.path.join(self.output_train_dir, 'losses.png'))
-        plt.clf()
+        plt.close()
 
         # save train_losses and val_losses to .npy or something for future reference
         np.save(self.train_losses_file, self.train_losses)
@@ -171,10 +171,11 @@ class TaskRegression():
 
 
 class CustomDataset(torch_dataset):
-    def __init__(self, dataset_path, part='train', outputs=['fitness', 'blocks_used']):
+    def __init__(self, dataset_path, part='train', outputs=['fitness', 'blocks_used'], input_features=4):
         self.dataset_path = dataset_path
         self.part = part
         self.outputs = outputs
+        self.input_features = input_features
 
         self.config = self.load_config()
         self.data = self.load_data()
@@ -193,13 +194,15 @@ class CustomDataset(torch_dataset):
 
     def __getitem__(self, idx):
         generation_id, fitness, blocks_used, chromosome = self.data[idx]
-        # print(f'Dataset getting item: {generation_id=}, {fitness=}, {blocks_used=}, {chromosome=}')
         graph = chr_to_digraph(chromosome)
+
+        # limit input features to self.input_features
+        graph.x = graph.x[:, :min(graph.x.shape[-1], self.input_features)].float()
 
         labels = []
         for output in self.outputs:
             labels.append(float(eval(output)))
-        
+
         return graph, torch.tensor(labels, dtype=torch.float32)
 
 task_choices = {
@@ -238,17 +241,17 @@ def main():
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f'Using device: {device}')
 
-    # load datasets
-    train_dataset = CustomDataset(args.dataset_path, part='train', outputs=args.model_output)
-    val_dataset = CustomDataset(args.dataset_path, part='val', outputs=args.model_output)
-
-    train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
-    val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
-
     # prepare task
     task = TaskRegression(args.output_train_dir, args.model_config, device=device, outputs=args.model_output)
     print(f'Task loaded')
     print(f'model: \n{task.model}')
+
+    # load datasets
+    train_dataset = CustomDataset(args.dataset_path, part='train', outputs=args.model_output, input_features=task.model.config['in_features'])
+    val_dataset = CustomDataset(args.dataset_path, part='val', outputs=args.model_output, input_features=task.model.config['in_features'])
+
+    train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+    val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
 
     # train
     training = True
@@ -274,8 +277,8 @@ def main():
                 test_step_time = time.time()
 
             if task.trained_steps % args.save_step == 0:
-                print('\nSave step:')
                 model_path = task.save_model()
+                print('\nModel saved to', model_path)
 
             graph = graph.to(device)
             labels = labels.to(device)
