@@ -175,7 +175,7 @@ def eliminate_chromosomes(chromosomes):
             print(f'Deactivating chrom {i}')
             chrom.active = False
 
-    # eliminate if threshold by ch.active = False
+    # eliminate by ch.active = False
 
 class TestDataset:
     def __init__(self, dataset_path, part='test'): #, outputs=['fitness', 'blocks_used'], input_features=4):

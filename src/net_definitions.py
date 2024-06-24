@@ -141,4 +141,3 @@ class GraphRegressorBasicBlocksUsed(torch.nn.Module, NetUtils):
 #     model = GraphRegressorBasic()
 #     print(f'model config: {model.config}')
 
-    
