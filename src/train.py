@@ -23,6 +23,7 @@ class TaskRegression():
     def __init__(self, output_train_dir, model_config_path: str, criterion = torch.nn.MSELoss(),
                  optimizer = None, device = 'cpu', outputs = ['fitness', 'blocks_used']):
         self.output_train_dir = utils.ensure_folder_created(output_train_dir)
+        self.output_checkpoints_dir = utils.ensure_folder_created(os.path.join(self.output_train_dir, 'checkpoints'))
         self.model_config, self.model_config_path = self.load_model_config(model_config_path)
         self.criterion = criterion
         self.device = device
@@ -39,6 +40,7 @@ class TaskRegression():
         self.val_losses_file = os.path.join(self.output_train_dir, 'val_losses.npy')
         self.train_losses, self.val_losses = self.load_loss_stats()
 
+        utils.ensure_folder_created(os.path.join(self.output_train_dir, 'test_steps'))
         self.save_model_config()
 
     def save_model_config(self):
@@ -89,12 +91,12 @@ class TaskRegression():
         return model
 
     def save_model(self):
-        model_path = os.path.join(self.output_train_dir, f'{self.model.__class__.__name__}_{self.trained_steps}{self.checkpoint_key}.pth')
+        model_path = os.path.join(self.output_checkpoints_dir, f'{self.model.__class__.__name__}_{self.trained_steps}{self.checkpoint_key}.pth')
         torch.save(self.model.state_dict(), model_path)
         return model_path
 
     def load_model(self, model_config, device = 'cpu'):
-        path, model_name = utils.find_last_model(self.output_train_dir, self.checkpoint_key)
+        path, model_name = utils.find_last_model(self.output_checkpoints_dir, self.checkpoint_key)
         if not path or not model_name:
             return None, 0
 
@@ -136,33 +138,86 @@ class TaskRegression():
         order = [i+b*2 for i in range(2) for b in range(len(self.outputs))]  # re-order columns to match test_step_log headers
         log = log[1:, order]
         df = pd.DataFrame(log.cpu().numpy(), columns=[out + sign for out in self.outputs for sign in ['', '_pred']])
-        df.to_csv(os.path.join(self.output_train_dir, f'test_step_log_{self.trained_steps}.tsv'), sep='\t', index=False)
+        df.to_csv(os.path.join(self.output_train_dir, 'test_steps', f'test_step_log_{self.trained_steps}.tsv'), sep='\t', index=False)
+        self.visualize_test_step_file(df, os.path.join(self.output_train_dir, 'test_steps', f'test_step_{self.trained_steps}.png'))
+        
 
         mean_val_loss = sum(losses) / len(losses) if losses else 0
         self.val_losses.append(mean_val_loss)
         return mean_val_loss
 
+    @staticmethod
+    def visualize_test_step_file(data, out_file):
+        fig, ax = plt.subplots(1, 2, figsize=(12, 6))
+
+        TaskRegression.plot_pred_vs_label(ax[0], data['fitness'], data['fitness_pred'], 'Fitness')
+        TaskRegression.plot_pred_vs_label(ax[1], data['blocks_used'], data['blocks_used_pred'], 'Blocks Used')
+
+        plt.tight_layout()
+        plt.savefig(out_file)
+        plt.clf()
+
+    @staticmethod
+    def plot_pred_vs_label(ax, x, y, title):
+        ax.scatter(x, y, alpha=0.5)
+        ax.set_xlabel('label')
+        ax.set_ylabel('pred')
+        min_val = min(x.min(), y.min())
+        max_val = max(x.max(), y.max())
+        ax.set_xlim(min_val, max_val)
+        ax.set_ylim(min_val, max_val)
+        ax.set_title(title)
+        ax.grid(True)
+
     def plot_stats(self):
         # produce 2 figure chart of train_losses and val_losses
         fig, ax = plt.subplots(2, 2)
-        for i in range(2):
-            ax[0, i].plot(self.train_losses)
-            ax[0, i].set_title('Train losses')
-            ax[0, i].set_xlabel('Trained steps')
-            ax[1, i].plot(self.val_losses)
-            ax[1, i].set_title('Val losses')
-            ax[1, i].set_xlabel('Test steps')
 
-        ax[0, 0].set_yscale('log')
-        ax[1, 0].set_yscale('log')
+        # plot_stats_values(train_losses, ax[0, :], title='Train losses', xlabel='Training step')
+        self.plot_stats_values(self.train_losses, ax[0, :], title='Train losses', xlabel='Training step')
+        self.plot_stats_values(self.val_losses, ax[1, :], title='Val losses', xlabel='Test step')
+
         plt.tight_layout()
-        print(f'Saving losses to {os.path.join(self.output_train_dir, "losses.png")}')
-        plt.savefig(os.path.join(self.output_train_dir, 'losses.png'))
-        plt.close()
+        loss_file = os.path.join(self.output_train_dir, 'losses.png')
+        print(f'Saving losses to {loss_file}')
+        plt.savefig(loss_file)
+        plt.clf()
 
         # save train_losses and val_losses to .npy or something for future reference
         np.save(self.train_losses_file, self.train_losses)
         np.save(self.val_losses_file, self.val_losses)
+
+    @staticmethod
+    def plot_stats_values(stats, ax, title='', xlabel=''):
+        if not stats:
+            return
+        running_avg, running_avg_indexes = TaskRegression.running_average(stats)
+
+        for i in range(2):
+            ax[i].plot(stats, label='IoU', color='b')
+            ax[i].axhline(y=np.max(stats), color='g', linestyle='--')
+            ax[i].axhline(y=np.min(stats), color='g', linestyle='--')
+            ax[i].plot(stats, color='b')
+            ax[i].plot(running_avg_indexes, running_avg, color='r', label='Running average')
+            ax[i].set_title(title)
+            ax[i].set_xlabel(xlabel)
+            ax[i].set_title(title)
+            ax[i].set_xlabel(xlabel)
+
+        ax[1].set_yscale('log')
+        ax[1].set_title(f'{title} (log scale)')
+
+    @staticmethod    
+    def running_average(stats, window_size_ratio=0.1):
+        window_size = int(len(stats) * window_size_ratio)
+        running_avg = np.zeros(len(stats) - window_size)
+
+        for i in range(len(stats) - window_size):
+            running_avg[i] = np.mean(stats[i:i+window_size])
+
+        running_average_indexes = np.arange(window_size, len(stats))
+
+        return running_avg, running_average_indexes
 
     def load_loss_stats(self):
         train_losses = list(np.load(self.train_losses_file)) if os.path.exists(self.train_losses_file) else []
