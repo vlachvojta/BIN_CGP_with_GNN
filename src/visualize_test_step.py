@@ -13,7 +13,13 @@ def parse_args():
 def main(args):
     for file in os.listdir(args.folder):
         if file.endswith('.tsv'):
-            visualize_test_step_file(os.path.join(args.folder, file))
+            out_file = os.path.join(args.folder, f'{file}.png')
+            if os.path.exists(out_file):
+                continue
+
+            data = pd.read_csv(os.path.join(args.folder, file), sep='\t')
+
+            visualize_test_step_file(data, out_file)
 
 def plot_pred_vs_label(ax, x, y, title):
     ax.scatter(x, y, alpha=0.5)
@@ -27,16 +33,8 @@ def plot_pred_vs_label(ax, x, y, title):
     ax.grid(True)
 
 
-def visualize_test_step_file(file):
-    path = os.path.dirname(file)
-    file_name = os.path.basename(file)
-    out_file = os.path.join(path, f'{file_name}.png')
-    if os.path.exists(out_file):
-        return
-
-    print(f'Processing file: {file}')
-    # read file
-    data = pd.read_csv(file, sep='\t')
+def visualize_test_step_file(data, out_file):
+    print(f'Processing file: {out_file}')
 
     fig, ax = plt.subplots(1, 2, figsize=(12, 6))
 
