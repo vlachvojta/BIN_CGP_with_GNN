@@ -115,7 +115,7 @@ class TaskRegression():
     def test_step(self, dataloader) -> float:
         self.model.eval()
         losses = []
-        log = torch.zeros([1, len(self.outputs * 2)])
+        log = torch.zeros([1, len(self.outputs * 2)]).to(self.device)
 
         with torch.no_grad():
             for i, (graph, labels) in enumerate(dataloader):
@@ -135,7 +135,7 @@ class TaskRegression():
 
         order = [i+b*2 for i in range(2) for b in range(len(self.outputs))]  # re-order columns to match test_step_log headers
         log = log[1:, order]
-        df = pd.DataFrame(log.numpy(), columns=[out + sign for out in self.outputs for sign in ['', '_pred']])
+        df = pd.DataFrame(log.cpu().numpy(), columns=[out + sign for out in self.outputs for sign in ['', '_pred']])
         df.to_csv(os.path.join(self.output_train_dir, f'test_step_log_{self.trained_steps}.tsv'), sep='\t', index=False)
 
         mean_val_loss = sum(losses) / len(losses) if losses else 0
@@ -239,6 +239,7 @@ def main():
     args = parse_args()
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    # device = 'cpu'
     print(f'Using device: {device}')
 
     # prepare task
@@ -272,7 +273,8 @@ def main():
                 print(f'trained_step: {task.trained_steps}, '
                       f'mean train loss: {sum(task.train_losses[-args.test_step:]) / args.test_step:.2f}, '
                       f'mean val loss: {mean_val_loss:.2f}, time of test_step: {utils.timeit(test_step_time)}, '
-                      f'time from start: {utils.timeit(start_time)}')
+                      f'time from start: {utils.timeit(start_time)}, '
+                      f'current time: {time.strftime("%H:%M:%S", time.localtime())}')
                 task.plot_stats()
                 test_step_time = time.time()
 

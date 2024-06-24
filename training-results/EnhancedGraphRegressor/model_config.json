@@ -1,0 +1,1 @@
+{"model_class": "EnhancedGraphRegressor", "in_features": 2, "conv_layers": 9, "attention_heads": 4, "decoder_layers": 4, "out_features": 2, "embed_size": 32}

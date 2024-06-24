@@ -1,0 +1,1 @@
+{"model_class": "GraphRegressorEmbed", "in_features": 2, "conv_layers": 9, "out_features": 2, "embed_size": 32}
