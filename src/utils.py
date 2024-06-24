@@ -35,7 +35,7 @@ def ensure_folder_created(folder_path):
 def find_last_model(path, key: str) -> (str, str):
     if os.path.isdir(path):
         model_names = [model for model in os.listdir(path) if model.endswith('.pth')]
-        print(f'Found {len(model_names)} models in {path}: {model_names}')
+        print(f'Found {len(model_names)} models in {path}')
         if model_names:
             last_model = sorted(model_names, key=lambda x: int(re.match(rf'\S+_(\d+){key}', x).groups(1)[0]))[-1]
             return path, last_model
